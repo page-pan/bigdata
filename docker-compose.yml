@@ -1,0 +1,155 @@
+version: '3.8'
+
+services:
+  namenode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-namenode
+    hostname: namenode
+    ports:
+      - "9870:9870"   # Web UI
+      - "9000:9000"   # HDFS service
+    volumes:
+      - ./hadoop-config/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./hadoop-config/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - namenode-data:/hadoop/dfs/name
+    environment:
+      - CLUSTER_NAME=bigdata-cluster
+    user: root
+    command: ["sh", "-c", "mkdir -p /hadoop/dfs/name && chmod 777 /hadoop/dfs/name && /opt/hadoop/bin/hdfs namenode -format -force && /opt/hadoop/bin/hdfs namenode"]
+    networks:
+      - bigdata-net
+
+  datanode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-datanode
+    hostname: datanode
+    volumes:
+      - ./hadoop-config/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./hadoop-config/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - datanode-data:/hadoop/dfs/data
+    environment:
+      - CLUSTER_NAME=bigdata-cluster
+    user: root
+    command: ["sh", "-c", "mkdir -p /hadoop/dfs/data && chmod 777 /hadoop/dfs/data && /opt/hadoop/bin/hdfs datanode"]
+    depends_on:
+      - namenode
+    networks:
+      - bigdata-net
+
+  spark-master:
+    image: bitnami/spark:3.5.6
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080"   # Spark Master UI
+      - "7077:7077"   # Spark Master port
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./spark-config/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
+      - ./datasets:/datasets
+      - ./scripts:/scripts
+    networks:
+      - bigdata-net
+
+  spark-worker:
+    image: bitnami/spark:3.5.6
+    container_name: spark-worker
+    hostname: spark-worker
+    ports:
+      - "8081:8081"   # Spark Worker UI
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./spark-config/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
+      - ./datasets:/datasets
+      - ./scripts:/scripts
+    depends_on:
+      - spark-master
+    networks:
+      - bigdata-net
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-bigdata
+    hostname: mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: bigdata_demo
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demopassword
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    networks:
+      - bigdata-net
+
+  jupyter:
+    build:
+      context: ./jupyter
+      dockerfile: Dockerfile
+    container_name: jupyter-notebook
+    hostname: jupyter-notebook
+    ports:
+      - "8888:8888"  # Jupyter Notebook
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./data:/data
+      - ./logs/jupyter:/home/jovyan/.local/share/jupyter/logs
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - SPARK_HOME=/opt/bitnami/spark
+      - HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+      - PYTHONPATH=/opt/bitnami/spark/python:/opt/bitnami/spark/python/lib/py4j-0.10.9.7-src.zip:$PYTHONPATH
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_DRIVER_PYTHON=python3
+      - HOME=/home/jovyan
+    user: root  # 使用root用户以避免权限问题
+    
+    depends_on:
+      - spark-master
+      - mysql
+    networks:
+      - bigdata-net
+
+  webapp:
+    build: ./webapp
+    container_name: bigdata-webapp
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./webapp:/app
+      - ./datasets:/datasets
+    environment:
+      - HDFS_NAMENODE=namenode:9000
+      - SPARK_MASTER=spark://spark-master:7077
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=demo
+      - MYSQL_PASSWORD=demopassword
+      - MYSQL_DATABASE=bigdata_demo
+    depends_on:
+      - namenode
+      - spark-master
+      - mysql
+    networks:
+      - bigdata-net
+
+networks:
+  bigdata-net:
+    driver: bridge
+
+volumes:
+  namenode-data:
+  datanode-data:
+  mysql-data:
