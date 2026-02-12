@@ -38,6 +38,7 @@ RUN pip3 install --no-cache-dir \
     jupyter \
     jupyterlab \
     jupyterlab-language-pack-zh-CN \
+    rise \
     notebook \
     ipykernel \
     pandas \
